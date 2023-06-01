@@ -1,12 +1,29 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from datetime import date
+from flask_marshmallow import Marshmallow
 
 app = Flask(__name__)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://trello_dev:spameggs123@localhost:5432/trello'
+app.config[
+    'SQLALCHEMY_DATABASE_URI'
+    ] = 'postgresql+psycopg2://trello_dev:spameggs123@localhost:5432/trello'
 
 db = SQLAlchemy(app)
+ma = Marshmallow(app)
+
+class User(db.Model):
+    __tablename__ = 'users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    email = db.Column(db.String, nullable=False, unique=True)
+    password = db.Column(db.String, nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
+
+class UserSchema(ma.Schema):
+    class Meta: 
+        fields = ('name', 'email', 'is_admin')
 
 class Card(db.Model):
     __tablename__ = 'cards'
@@ -17,6 +34,11 @@ class Card(db.Model):
     status = db.Column(db.String(30))
     date_created = db.Column(db.Date())
 
+class CardSchema(ma.Schema):
+    class Meta:
+        fields = ('id', 'title', 'description', 'status')
+
+
 @app.cli.command('create')
 def create_db():
     db.drop_all()
@@ -25,6 +47,18 @@ def create_db():
 
 @app.cli.command('seed')
 def seed_db():
+    users = [
+        User(
+            email = 'admin@spam.com',
+            password = 'spineynorman',
+            is_admin = True
+        ),
+        User(
+            name = 'John Cleese',
+            email = 'cleese@spam.com',
+            password = 'tisbutascratch'
+        )
+    ]
     # Create instance of Card model in memory
     cards = [
     Card(
@@ -51,9 +85,11 @@ def seed_db():
 
     # Truncate the Card table
     db.session.query(Card).delete()
+    db.session.query(User).delete()
 
     # Add the card to the session (transaction)
     db.session.add_all(cards)
+    db.session.add_all(users)
 
     # Commit the transaction to the database
     db.session.commit()
@@ -65,7 +101,7 @@ def all_cards():
     ## in sqlalchemy language:
     stmt = db.select(Card).order_by(Card.status.desc())
     cards = db.session.scalars(stmt).all()
-    return cards
+    return CardSchema(many=True).dump(cards)
 
 @app.route('/')
 def index():
