@@ -1,10 +1,11 @@
 from flask import Flask, request, abort
 from datetime import date, timedelta
 from sqlalchemy.exc import IntegrityError
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from os import environ
 from dotenv import load_dotenv
 from models.user import User, UserSchema
+from models.card import Card, CardSchema
 from init import db, ma, bcrypt, jwt
 
 load_dotenv()
@@ -29,21 +30,6 @@ def admin_required():
 @app.errorhandler(401)
 def unauthorized(err):
     return {'error': 'You must be an admin'}, 401
-
-
-class Card(db.Model):
-    __tablename__ = 'cards'
-
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(100))
-    description = db.Column(db.Text())
-    status = db.Column(db.String(30))
-    date_created = db.Column(db.Date())
-
-class CardSchema(ma.Schema):
-    class Meta:
-        fields = ('id', 'title', 'description', 'status')
-
 
 @app.cli.command('create')
 def create_db():
