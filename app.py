@@ -1,29 +1,35 @@
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from datetime import date
-from flask_marshmallow import Marshmallow
+from flask import Flask, request, abort
+from datetime import date, timedelta
+from sqlalchemy.exc import IntegrityError
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from os import environ
+from dotenv import load_dotenv
+from models.user import User, UserSchema
+from init import db, ma, bcrypt, jwt
+
+load_dotenv()
 
 app = Flask(__name__)
 
-app.config[
-    'SQLALCHEMY_DATABASE_URI'
-    ] = 'postgresql+psycopg2://trello_dev:spameggs123@localhost:5432/trello'
+app.config['JWT_SECRET_KEY'] = environ.get('JWT_KEY')
+app.config['SQLALCHEMY_DATABASE_URI'] = environ.get('DB_URI')
 
-db = SQLAlchemy(app)
-ma = Marshmallow(app)
+db.init_app(app)
+ma.init_app(app)
+jwt.init_app(app)
+bcrypt.init_app(app)
 
-class User(db.Model):
-    __tablename__ = 'users'
+def admin_required():
+    user_email = get_jwt_identity()
+    stmt = db.select(User).filter_by(email=user_email)
+    user = db.session.scalar(stmt)
+    if not (user and user.is_admin):
+        abort(401)
 
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String)
-    email = db.Column(db.String, nullable=False, unique=True)
-    password = db.Column(db.String, nullable=False)
-    is_admin = db.Column(db.Boolean, default=False)
+@app.errorhandler(401)
+def unauthorized(err):
+    return {'error': 'You must be an admin'}, 401
 
-class UserSchema(ma.Schema):
-    class Meta: 
-        fields = ('name', 'email', 'is_admin')
 
 class Card(db.Model):
     __tablename__ = 'cards'
@@ -50,13 +56,13 @@ def seed_db():
     users = [
         User(
             email = 'admin@spam.com',
-            password = 'spineynorman',
+            password = bcrypt.generate_password_hash('spineynorman').decode('utf-8'),
             is_admin = True
         ),
         User(
             name = 'John Cleese',
             email = 'cleese@spam.com',
-            password = 'tisbutascratch'
+            password = bcrypt.generate_password_hash('tisbutascratch').decode('utf-8')
         )
     ]
     # Create instance of Card model in memory
@@ -95,8 +101,41 @@ def seed_db():
     db.session.commit()
     print('Models seeded')
 
+@app.route('/register', methods=['POST'])
+def register():
+    try:
+        user_info = UserSchema().load(request.json)
+        user = User(
+            email=user_info['email'],
+            password=bcrypt.generate_password_hash(user_info['password']).decode('utf8'),
+            name = user_info['name']
+        )
+
+        db.session.add(user)
+        db.session.commit()
+
+        return UserSchema(exclude=['password']).dump(user), 201
+    
+    except IntegrityError:
+        return {'error': 'Email address already in use'}, 409
+
+@app.route('/login', methods=['POST'])
+def login():
+    try:
+        stmt = db.select(User).filter_by(email=request.json['email'])
+        user = db.session.scalar(stmt)
+        if user and bcrypt.check_password_hash(user.password, request.json['password']):
+            token = create_access_token(identity=user.email, expires_delta=timedelta(days=1))
+            return {'token': token, 'user': UserSchema(exclude=['password']).dump(user)}
+        else: 
+            return {'error': 'Invalid email address or password'}, 401
+    except KeyError:
+        return {'error': 'Email & password required'}, 400
+    
 @app.route('/cards')
+@jwt_required()
 def all_cards():
+    admin_required()
     # select * from cards;
     ## in sqlalchemy language:
     stmt = db.select(Card).order_by(Card.status.desc())
